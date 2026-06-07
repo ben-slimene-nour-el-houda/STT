@@ -1,0 +1,64 @@
+version: '3.8'
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: stt-redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  api:
+    build: .
+    container_name: stt-api
+    command: uvicorn api.main:app --host 0.0.0.0 --port 8000
+    volumes:
+      - .:/app
+      - ./uploads:/app/uploads
+    ports:
+      - "8000:8000"
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - UPLOAD_DIR=./uploads
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  worker:
+    build: .
+    container_name: stt-worker
+    command: celery -A worker.celery_app worker --loglevel=info --concurrency=1
+    volumes:
+      - .:/app
+      - ./uploads:/app/uploads
+      - ./models:/app/models
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - MODEL_DEVICE=cpu
+      - MODEL_DIR=./models
+      - UPLOAD_DIR=./uploads
+      # To avoid Hugging Face rate limits on downloads, uncomment and add your token here:
+      # - HF_TOKEN=your_token_here
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+    # -------------------------------------------------------------------------
+    # GPU SUPPORT: Uncomment the following block to enable CUDA in the worker.
+    # Note: You must have the NVIDIA Container Toolkit installed on your host.
+    # -------------------------------------------------------------------------
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
